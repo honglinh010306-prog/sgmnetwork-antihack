@@ -1,0 +1,48 @@
+{
+  "name": "free-fire-antihack-center",
+  "version": "1.0.0",
+  "description": "Free Fire Antihack reporting desktop application",
+  "main": "main.js",
+  "author": "Free Fire Antihack Center",
+  "license": "UNLICENSED",
+  "scripts": {
+    "start": "electron .",
+    "dist": "electron-builder --win"
+  },
+  "build": {
+    "appId": "com.freefire.antihack.center",
+    "productName": "Free Fire Antihack Center",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "index.html",
+      "admin/**/*",
+      "styles.css",
+      "script.js",
+      "main.js",
+      "supabase-config.js",
+      "*.jpg",
+      "*.png",
+      "*.ico",
+      "Font GFF Latin - Việt Hoá/**/*"
+    ],
+    "win": {
+      "target": [
+        "nsis",
+        "portable"
+      ],
+      "artifactName": "Free-Fire-Antihack-Center-${version}-${arch}.${ext}"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true
+    }
+  },
+  "devDependencies": {
+    "electron": "^38.1.0",
+    "electron-builder": "^26.0.12"
+  }
+}
