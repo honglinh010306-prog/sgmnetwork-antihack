@@ -25,9 +25,15 @@ const announcementMessage = document.querySelector('#announcement-message');
 const announcementStorageKey = 'ff_antihack_announcement';
 let activeReportId = '';
 const supabaseReady = Boolean(window.supabase?.createClient && window.SUPABASE_CONFIG?.url && !window.SUPABASE_CONFIG.url.includes('YOUR_') && window.SUPABASE_CONFIG?.anonKey && !window.SUPABASE_CONFIG.anonKey.includes('YOUR_'));
-const supabaseClient = supabaseReady ? window.supabase.createClient(window.SUPABASE_CONFIG.url, window.SUPABASE_CONFIG.anonKey) : null;
+const supabaseClient = supabaseReady ? (window.SharedSupabaseClient || window.supabase.createClient(window.SUPABASE_CONFIG.url, window.SUPABASE_CONFIG.anonKey)) : null;
 
-const readReports = () => JSON.parse(localStorage.getItem(storageKey) || '[]');
+let reportCache = window.ReportStore ? window.ReportStore.localReports() : [];
+const readReports = () => reportCache;
+async function refreshReports() {
+  if (!window.ReportStore) return;
+  reportCache = await window.ReportStore.getReports();
+  renderReports();
+}
 const escapeHtml = (value = '') => String(value).replace(/[&<>'"]/g, (character) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' })[character]);
 const formatDate = (value) => value ? new Intl.DateTimeFormat('vi-VN', { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(value)) : 'Chưa cung cấp';
 const getEvidenceMarkup = (report) => {
@@ -51,6 +57,7 @@ function setAuthenticated(isAuthenticated) {
   adminMain.hidden = !isAuthenticated;
   logoutButton.hidden = !isAuthenticated;
   if (isAuthenticated) renderReports();
+  if (isAuthenticated) refreshReports();
 }
 
 async function handleAuth(event) {
@@ -63,7 +70,9 @@ async function handleAuth(event) {
   const password = document.querySelector('#admin-password').value;
   const result = await supabaseClient.auth.signInWithPassword({ email: username, password });
   if (result.error) {
-    authError.textContent = result.error.message;
+    authError.textContent = result.error.message.includes('Invalid login credentials')
+      ? 'Email hoặc mật khẩu không đúng, hoặc tài khoản chưa xác nhận email.'
+      : `Đăng nhập thất bại: ${result.error.message}`;
     return;
   }
   authForm.reset();
@@ -170,7 +179,10 @@ function updateStatus(id, status) {
     const statusHistory = report.statusHistory || [{ status: report.status, at: report.createdAt }];
     return { ...report, status, statusHistory: [...statusHistory, { status, at: new Date().toISOString() }] };
   });
-  localStorage.setItem(storageKey, JSON.stringify(reports));
+  reportCache = reports;
+  const changed = reports.find((report) => report.id === id);
+  if (window.ReportStore) window.ReportStore.updateReport(id, changed);
+  else localStorage.setItem(storageKey, JSON.stringify(reports));
   renderReports();
 }
 
@@ -178,7 +190,10 @@ document.querySelector('#save-reply').addEventListener('click', () => {
   if (!activeReportId) return;
   const reply = replyInput.value.trim();
   const reports = readReports().map((report) => report.id === activeReportId ? { ...report, reply, repliedAt: reply ? new Date().toISOString() : '' } : report);
-  localStorage.setItem(storageKey, JSON.stringify(reports));
+  reportCache = reports;
+  const changed = reports.find((report) => report.id === activeReportId);
+  if (window.ReportStore) window.ReportStore.updateReport(activeReportId, changed);
+  else localStorage.setItem(storageKey, JSON.stringify(reports));
   replySaved.textContent = reply ? 'Đã lưu phản hồi' : 'Đã xóa phản hồi';
 });
 replyTemplate.addEventListener('change', () => {
@@ -228,3 +243,6 @@ if (supabaseClient) {
   authError.textContent = 'Chưa cấu hình Supabase. Hãy cập nhật supabase-config.js.';
 }
 loadAnnouncement();
+window.setInterval(() => {
+  if (sessionStorage.getItem('ff_antihack_admin_session') || supabaseClient) refreshReports();
+}, 5000);

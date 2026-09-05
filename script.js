@@ -90,7 +90,14 @@ const readEvidence = (file) => new Promise((resolve) => {
   reader.readAsDataURL(file);
 });
 const escapeHtml = (value = '') => String(value).replace(/[&<>'"]/g, (character) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' })[character]);
-const readReports = () => JSON.parse(localStorage.getItem('ff_antihack_reports') || '[]');
+let reportCache = window.ReportStore ? window.ReportStore.localReports() : [];
+const readReports = () => reportCache;
+async function refreshReports() {
+  if (!window.ReportStore) return;
+  reportCache = await window.ReportStore.getReports();
+  renderPublicOverview();
+  renderNotifications();
+}
 const readSeenReplies = () => JSON.parse(localStorage.getItem(notificationSeenKey) || '[]');
 
 function renderPublicOverview() {
@@ -244,7 +251,11 @@ form.addEventListener('submit', async (event) => {
     statusHistory: [{ status: 'Mới', at: createdAt }],
     createdAt
   });
-  localStorage.setItem('ff_antihack_reports', JSON.stringify(reports));
+  reportCache = reports;
+  if (window.ReportStore) {
+    const result = await window.ReportStore.saveReport(reports[0]);
+    if (result.error) console.warn('Không đồng bộ được Supabase:', result.error.message);
+  } else localStorage.setItem('ff_antihack_reports', JSON.stringify(reports));
   renderPublicOverview();
   renderNotifications();
   toast.querySelector('strong').textContent = 'Đã tiếp nhận báo cáo';
@@ -295,6 +306,8 @@ renderAnnouncement();
 renderPublicOverview();
 updateOccurredAt();
 window.setInterval(updateOccurredAt, 1000);
+refreshReports();
+window.setInterval(refreshReports, 5000);
 
 document.addEventListener('contextmenu', (event) => event.preventDefault());
 document.addEventListener('selectstart', (event) => event.preventDefault());
