@@ -10,6 +10,7 @@ const replySaved = document.querySelector('#reply-saved');
 const authPanel = document.querySelector('#auth-panel');
 const adminMain = document.querySelector('#admin-main');
 const authForm = document.querySelector('#auth-form');
+const authSubmit = document.querySelector('#auth-submit');
 const authError = document.querySelector('#auth-error');
 const logoutButton = document.querySelector('#logout-button');
 const cylinderChart = document.querySelector('#cylinder-chart');
@@ -68,14 +69,24 @@ async function handleAuth(event) {
   }
   const username = document.querySelector('#admin-username').value.trim();
   const password = document.querySelector('#admin-password').value;
+  authError.textContent = '';
+  authSubmit.disabled = true;
+  authSubmit.textContent = 'Đang đăng nhập...';
   const result = await supabaseClient.auth.signInWithPassword({ email: username, password });
   if (result.error) {
-    authError.textContent = result.error.message.includes('Invalid login credentials')
-      ? 'Email hoặc mật khẩu không đúng, hoặc tài khoản chưa xác nhận email.'
-      : `Đăng nhập thất bại: ${result.error.message}`;
+    const message = result.error.message.toLowerCase();
+    authError.textContent = message.includes('email not confirmed')
+      ? 'Email chưa được xác nhận. Hãy mở email Supabase để xác nhận tài khoản.'
+      : message.includes('invalid login credentials')
+        ? 'Không đăng nhập được: tài khoản chưa tồn tại hoặc email/mật khẩu không đúng.'
+        : `Đăng nhập thất bại: ${result.error.message}`;
+    authSubmit.disabled = false;
+    authSubmit.textContent = 'Đăng nhập';
     return;
   }
   authForm.reset();
+  authSubmit.disabled = false;
+  authSubmit.textContent = 'Đăng nhập';
   setAuthenticated(true);
 }
 
