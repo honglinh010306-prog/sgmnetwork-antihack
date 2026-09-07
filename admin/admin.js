@@ -25,15 +25,45 @@ const announcementActive = document.querySelector('#announcement-active');
 const announcementMessage = document.querySelector('#announcement-message');
 const announcementStorageKey = 'ff_antihack_announcement';
 let activeReportId = '';
-const supabaseReady = Boolean(window.supabase?.createClient && window.SUPABASE_CONFIG?.url && !window.SUPABASE_CONFIG.url.includes('YOUR_') && window.SUPABASE_CONFIG?.anonKey && !window.SUPABASE_CONFIG.anonKey.includes('YOUR_'));
-const supabaseClient = supabaseReady ? (window.SharedSupabaseClient || window.supabase.createClient(window.SUPABASE_CONFIG.url, window.SUPABASE_CONFIG.anonKey)) : null;
+// --- Admin password (change this to your own password) ---
+const ADMIN_PASSWORD = 'SGMAdmin@2026';
+// ----------------------------------------------------------
+const supabaseClient = window.ReportStore?.reportSupabase || null;
 
 let reportCache = window.ReportStore ? window.ReportStore.localReports() : [];
+let _unsubscribeRealtime = null;
 const readReports = () => reportCache;
+
 async function refreshReports() {
   if (!window.ReportStore) return;
   reportCache = await window.ReportStore.getReports();
   renderReports();
+}
+
+function startRealtime() {
+  if (!window.ReportStore?.subscribeRealtime) return;
+  if (_unsubscribeRealtime) _unsubscribeRealtime();
+  _unsubscribeRealtime = window.ReportStore.subscribeRealtime(
+    // INSERT — prepend new report
+    (newReport) => {
+      const exists = reportCache.some((r) => r.id === newReport.id);
+      if (!exists) {
+        reportCache = [newReport, ...reportCache];
+        renderReports();
+      }
+    },
+    // UPDATE — replace in cache
+    (updated) => {
+      reportCache = reportCache.map((r) => r.id === updated.id ? updated : r);
+      renderReports();
+      // Refresh detail modal if it's currently open for this report
+      if (!modal.hidden && activeReportId === updated.id) openDetails(updated.id);
+    }
+  );
+}
+
+function stopRealtime() {
+  if (_unsubscribeRealtime) { _unsubscribeRealtime(); _unsubscribeRealtime = null; }
 }
 const escapeHtml = (value = '') => String(value).replace(/[&<>'"]/g, (character) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' })[character]);
 const formatDate = (value) => value ? new Intl.DateTimeFormat('vi-VN', { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(value)) : 'Chưa cung cấp';
@@ -57,33 +87,29 @@ function setAuthenticated(isAuthenticated) {
   authPanel.hidden = isAuthenticated;
   adminMain.hidden = !isAuthenticated;
   logoutButton.hidden = !isAuthenticated;
-  if (isAuthenticated) renderReports();
-  if (isAuthenticated) refreshReports();
+  if (isAuthenticated) {
+    renderReports();
+    refreshReports();
+    startRealtime();
+  } else {
+    stopRealtime();
+  }
 }
 
 async function handleAuth(event) {
   event.preventDefault();
-  if (!supabaseClient) {
-    authError.textContent = 'Chưa cấu hình Supabase. Hãy cập nhật supabase-config.js.';
-    return;
-  }
-  const username = document.querySelector('#admin-username').value.trim();
   const password = document.querySelector('#admin-password').value;
   authError.textContent = '';
   authSubmit.disabled = true;
   authSubmit.textContent = 'Đang đăng nhập...';
-  const result = await supabaseClient.auth.signInWithPassword({ email: username, password });
-  if (result.error) {
-    const message = result.error.message.toLowerCase();
-    authError.textContent = message.includes('email not confirmed')
-      ? 'Email chưa được xác nhận. Hãy mở email Supabase để xác nhận tài khoản.'
-      : message.includes('invalid login credentials')
-        ? 'Không đăng nhập được: tài khoản chưa tồn tại hoặc email/mật khẩu không đúng.'
-        : `Đăng nhập thất bại: ${result.error.message}`;
+  await new Promise((r) => setTimeout(r, 300)); // small delay to prevent brute force
+  if (password !== ADMIN_PASSWORD) {
+    authError.textContent = 'Mật khẩu không đúng. Vui lòng thử lại.';
     authSubmit.disabled = false;
     authSubmit.textContent = 'Đăng nhập';
     return;
   }
+  sessionStorage.setItem('ff_antihack_admin_auth', '1');
   authForm.reset();
   authSubmit.disabled = false;
   authSubmit.textContent = 'Đăng nhập';
@@ -184,7 +210,7 @@ function closeDetails() {
   modal.hidden = true;
 }
 
-function updateStatus(id, status) {
+async function updateStatus(id, status) {
   const reports = readReports().map((report) => {
     if (report.id !== id || report.status === status) return report;
     const statusHistory = report.statusHistory || [{ status: report.status, at: report.createdAt }];
@@ -192,18 +218,22 @@ function updateStatus(id, status) {
   });
   reportCache = reports;
   const changed = reports.find((report) => report.id === id);
-  if (window.ReportStore) window.ReportStore.updateReport(id, changed);
+  if (window.ReportStore) await window.ReportStore.updateReport(id, changed);
   else localStorage.setItem(storageKey, JSON.stringify(reports));
   renderReports();
 }
 
-document.querySelector('#save-reply').addEventListener('click', () => {
+document.querySelector('#save-reply').addEventListener('click', async () => {
   if (!activeReportId) return;
   const reply = replyInput.value.trim();
-  const reports = readReports().map((report) => report.id === activeReportId ? { ...report, reply, repliedAt: reply ? new Date().toISOString() : '' } : report);
+  const reports = readReports().map((report) =>
+    report.id === activeReportId
+      ? { ...report, reply, repliedAt: reply ? new Date().toISOString() : '' }
+      : report
+  );
   reportCache = reports;
   const changed = reports.find((report) => report.id === activeReportId);
-  if (window.ReportStore) window.ReportStore.updateReport(activeReportId, changed);
+  if (window.ReportStore) await window.ReportStore.updateReport(activeReportId, changed);
   else localStorage.setItem(storageKey, JSON.stringify(reports));
   replySaved.textContent = reply ? 'Đã lưu phản hồi' : 'Đã xóa phản hồi';
 });
@@ -236,24 +266,18 @@ document.querySelector('#announcement-remove').addEventListener('click', () => {
 });
 authForm.addEventListener('submit', handleAuth);
 logoutButton.addEventListener('click', () => {
-  if (!supabaseClient) return;
-  supabaseClient.auth.signOut().then(() => {
-    setAuthenticated(false);
-  });
+  sessionStorage.removeItem('ff_antihack_admin_auth');
+  setAuthenticated(false);
 });
 document.querySelector('#close-modal').addEventListener('click', closeDetails);
 modal.addEventListener('click', (event) => { if (event.target === modal) closeDetails(); });
 document.addEventListener('keydown', (event) => { if (event.key === 'Escape') closeDetails(); });
 
 lucide.createIcons();
-if (supabaseClient) {
-  supabaseClient.auth.getSession().then(({ data }) => setAuthenticated(Boolean(data.session)));
-  supabaseClient.auth.onAuthStateChange((_event, session) => setAuthenticated(Boolean(session)));
-} else {
-  setAuthenticated(false);
-  authError.textContent = 'Chưa cấu hình Supabase. Hãy cập nhật supabase-config.js.';
-}
+// Auto-restore session on reload
+setAuthenticated(sessionStorage.getItem('ff_antihack_admin_auth') === '1');
 loadAnnouncement();
+// Polling fallback — only runs if Realtime is unavailable
 window.setInterval(() => {
-  if (sessionStorage.getItem('ff_antihack_admin_session') || supabaseClient) refreshReports();
+  if (sessionStorage.getItem('ff_antihack_admin_auth') === '1' && !_unsubscribeRealtime) refreshReports();
 }, 5000);

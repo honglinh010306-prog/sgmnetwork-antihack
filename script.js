@@ -307,7 +307,25 @@ renderPublicOverview();
 updateOccurredAt();
 window.setInterval(updateOccurredAt, 1000);
 refreshReports();
-window.setInterval(refreshReports, 5000);
+// Realtime sync — instantly reflects changes from any device
+if (window.ReportStore?.subscribeRealtime) {
+  window.ReportStore.subscribeRealtime(
+    (newReport) => {
+      if (!reportCache.some((r) => r.id === newReport.id)) {
+        reportCache = [newReport, ...reportCache];
+        renderPublicOverview();
+        renderNotifications();
+      }
+    },
+    (updated) => {
+      reportCache = reportCache.map((r) => r.id === updated.id ? updated : r);
+      renderPublicOverview();
+      renderNotifications();
+    }
+  );
+} else {
+  window.setInterval(refreshReports, 5000);
+}
 
 document.addEventListener('contextmenu', (event) => event.preventDefault());
 document.addEventListener('selectstart', (event) => event.preventDefault());

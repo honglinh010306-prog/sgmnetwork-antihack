@@ -1,90 +1,161 @@
 const reportStorageKey = 'ff_antihack_reports';
-const supabaseDataReady = Boolean(window.supabase?.createClient && window.SUPABASE_CONFIG?.url && !window.SUPABASE_CONFIG.url.includes('YOUR_') && window.SUPABASE_CONFIG?.anonKey && !window.SUPABASE_CONFIG.anonKey.includes('YOUR_'));
-const reportSupabase = supabaseDataReady ? window.supabase.createClient(window.SUPABASE_CONFIG.url, window.SUPABASE_CONFIG.anonKey) : null;
+const supabaseDataReady = Boolean(
+  window.supabase?.createClient &&
+  window.SUPABASE_CONFIG?.url &&
+  !window.SUPABASE_CONFIG.url.includes('YOUR_') &&
+  window.SUPABASE_CONFIG?.anonKey &&
+  !window.SUPABASE_CONFIG.anonKey.includes('YOUR_')
+);
+const reportSupabase = supabaseDataReady
+  ? window.supabase.createClient(window.SUPABASE_CONFIG.url, window.SUPABASE_CONFIG.anonKey)
+  : null;
 window.SharedSupabaseClient = reportSupabase;
 
+/* ── helpers ─────────────────────────────────────────── */
 function localReports() {
   return JSON.parse(localStorage.getItem(reportStorageKey) || '[]');
 }
 
+function mapRow(row) {
+  return {
+    ...row,
+    id: row.report_code || row.id,
+    playerName: row.player_name || '',
+    reporterUid: row.reporter_uid || '',
+    target: row.target || '',
+    occurredAt: row.occurred_at,
+    evidenceName: row.evidence_name || '',
+    evidenceData: row.evidence_data || '',
+    evidenceType: row.evidence_type || '',
+    statusHistory: row.status_history || [{ status: row.status, at: row.created_at }],
+    createdAt: row.created_at,
+  };
+}
+
+/* ── getReports ──────────────────────────────────────── */
 async function getReports() {
   if (!reportSupabase) return localReports();
-  const { data, error } = await reportSupabase.from('reports').select('*').order('created_at', { ascending: false });
+
+  const { data, error } = await reportSupabase
+    .from('reports')
+    .select('*')
+    .order('created_at', { ascending: false });
+
   if (error) {
-    console.warn('Supabase reports unavailable, using local fallback:', error.message);
+    console.warn('Supabase getReports error, using local fallback:', error.message);
     return localReports();
   }
-  const remoteReports = data.map((report) => ({
-    ...report,
-    id: report.report_code || report.id,
-    playerName: report.player_name || '',
-    reporterUid: report.reporter_uid || '',
-    target: report.target || '',
-    occurredAt: report.occurred_at,
-    evidenceName: report.evidence_name || '',
-    evidenceData: report.evidence_data || '',
-    evidenceType: report.evidence_type || '',
-    statusHistory: report.status_history || [{ status: report.status, at: report.created_at }],
-    createdAt: report.created_at
-  }));
-  const remoteIds = new Set(remoteReports.map((report) => report.id));
-  const pendingLocal = localReports().filter((report) => !remoteIds.has(report.id));
+
+  const remoteReports = data.map(mapRow);
+
+  // Push any locally-queued reports that haven't reached Supabase yet
+  const remoteIds = new Set(remoteReports.map((r) => r.id));
+  const pendingLocal = localReports().filter((r) => !remoteIds.has(r.id));
   if (pendingLocal.length) {
-    await Promise.all(pendingLocal.map((report) => reportSupabase.from('reports').insert({
-      report_code: report.id,
-      type: report.type,
-      player_name: report.playerName || '',
-      reporter_uid: report.reporterUid || '',
-      target: report.target || '',
-      occurred_at: report.occurredAt,
-      category: report.category || 'Khác',
-      description: report.description || '',
-      evidence_name: report.evidenceName || '',
-      evidence_data: report.evidenceData || '',
-      evidence_type: report.evidenceType || '',
-      status: report.status || 'Mới',
-      status_history: report.statusHistory || [],
-      created_at: report.createdAt || new Date().toISOString()
-    })));
+    await Promise.all(pendingLocal.map((r) => _insertRow(r)));
+    // After syncing pending reports remove them from local queue
+    const stillPending = localReports().filter((r) => !remoteIds.has(r.id));
+    if (!stillPending.length) localStorage.removeItem(reportStorageKey);
   }
-  return [...remoteReports, ...pendingLocal];
+
+  return remoteReports;
 }
 
+/* ── saveReport ──────────────────────────────────────── */
 async function saveReport(report) {
-  const reports = localReports();
-  reports.unshift(report);
-  localStorage.setItem(reportStorageKey, JSON.stringify(reports));
-  if (!reportSupabase) return { data: report, error: null };
-  const { data, error } = await reportSupabase.from('reports').insert({
+  if (!reportSupabase) {
+    // Offline fallback: queue in localStorage
+    const queue = localReports();
+    queue.unshift(report);
+    localStorage.setItem(reportStorageKey, JSON.stringify(queue));
+    return { data: report, error: null };
+  }
+
+  const { data, error } = await _insertRow(report);
+  if (error) {
+    // Queue locally so it syncs later
+    const queue = localReports();
+    queue.unshift(report);
+    localStorage.setItem(reportStorageKey, JSON.stringify(queue));
+    console.warn('Supabase saveReport failed, queued locally:', error.message);
+  }
+  return { data, error };
+}
+
+async function _insertRow(report) {
+  return reportSupabase.from('reports').insert({
     report_code: report.id,
     type: report.type,
-    player_name: report.playerName,
-    reporter_uid: report.reporterUid,
-    target: report.target,
+    player_name: report.playerName || '',
+    reporter_uid: report.reporterUid || '',
+    target: report.target || '',
     occurred_at: report.occurredAt,
-    category: report.category,
-    description: report.description,
-    evidence_name: report.evidenceName,
-    evidence_data: report.evidenceData,
-    evidence_type: report.evidenceType,
-    status: report.status,
-    status_history: report.statusHistory,
-    created_at: report.createdAt
+    category: report.category || 'Khác',
+    description: report.description || '',
+    evidence_name: report.evidenceName || '',
+    evidence_data: report.evidenceData || '',
+    evidence_type: report.evidenceType || '',
+    status: report.status || 'Mới',
+    status_history: report.statusHistory || [],
+    created_at: report.createdAt || new Date().toISOString(),
   }).select().single();
-  return { data, error };
 }
 
+/* ── updateReport ────────────────────────────────────── */
 async function updateReport(id, changes) {
-  const reports = localReports().map((report) => report.id === id ? { ...report, ...changes } : report);
-  localStorage.setItem(reportStorageKey, JSON.stringify(reports));
+  // Always update local cache first for instant UI feedback
+  const local = localReports().map((r) =>
+    r.id === id ? { ...r, ...changes } : r
+  );
+  localStorage.setItem(reportStorageKey, JSON.stringify(local));
+
   if (!reportSupabase) return { data: changes, error: null };
-  const { data, error } = await reportSupabase.from('reports').update({
-    status: changes.status,
-    status_history: changes.statusHistory,
-    reply: changes.reply,
-    replied_at: changes.repliedAt
-  }).eq('report_code', id).select().single();
+
+  const { data, error } = await reportSupabase
+    .from('reports')
+    .update({
+      status: changes.status,
+      status_history: changes.statusHistory,
+      reply: changes.reply,
+      replied_at: changes.repliedAt,
+    })
+    .eq('report_code', id)
+    .select()
+    .single();
+
+  if (error) console.warn('Supabase updateReport failed:', error.message);
   return { data, error };
 }
 
-window.ReportStore = { getReports, saveReport, updateReport, localReports, reportSupabase };
+/* ── Realtime subscription ───────────────────────────── */
+// Allows every open tab / device to receive INSERT and UPDATE events instantly.
+let _realtimeChannel = null;
+function subscribeRealtime(onInsert, onUpdate) {
+  if (!reportSupabase) return () => {};
+  if (_realtimeChannel) {
+    reportSupabase.removeChannel(_realtimeChannel);
+    _realtimeChannel = null;
+  }
+  _realtimeChannel = reportSupabase
+    .channel('reports-realtime')
+    .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'reports' }, (payload) => {
+      if (typeof onInsert === 'function') onInsert(mapRow(payload.new));
+    })
+    .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'reports' }, (payload) => {
+      if (typeof onUpdate === 'function') onUpdate(mapRow(payload.new));
+    })
+    .subscribe();
+  return () => {
+    if (_realtimeChannel) reportSupabase.removeChannel(_realtimeChannel);
+    _realtimeChannel = null;
+  };
+}
+
+window.ReportStore = {
+  getReports,
+  saveReport,
+  updateReport,
+  localReports,
+  subscribeRealtime,
+  reportSupabase,
+};
