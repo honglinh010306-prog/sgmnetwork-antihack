@@ -53,9 +53,7 @@ async function getReports() {
   const pendingLocal = localReports().filter((r) => !remoteIds.has(r.id));
   if (pendingLocal.length) {
     await Promise.all(pendingLocal.map((r) => _insertRow(r)));
-    // After syncing pending reports remove them from local queue
-    const stillPending = localReports().filter((r) => !remoteIds.has(r.id));
-    if (!stillPending.length) localStorage.removeItem(reportStorageKey);
+    localStorage.removeItem(reportStorageKey);
   }
 
   return remoteReports;
@@ -64,7 +62,6 @@ async function getReports() {
 /* ── saveReport ──────────────────────────────────────── */
 async function saveReport(report) {
   if (!reportSupabase) {
-    // Offline fallback: queue in localStorage
     const queue = localReports();
     queue.unshift(report);
     localStorage.setItem(reportStorageKey, JSON.stringify(queue));
@@ -103,7 +100,7 @@ async function _insertRow(report) {
 
 /* ── updateReport ────────────────────────────────────── */
 async function updateReport(id, changes) {
-  // Always update local cache first for instant UI feedback
+  // Update local cache first for instant UI feedback
   const local = localReports().map((r) =>
     r.id === id ? { ...r, ...changes } : r
   );
@@ -128,7 +125,6 @@ async function updateReport(id, changes) {
 }
 
 /* ── Realtime subscription ───────────────────────────── */
-// Allows every open tab / device to receive INSERT and UPDATE events instantly.
 let _realtimeChannel = null;
 function subscribeRealtime(onInsert, onUpdate) {
   if (!reportSupabase) return () => {};
