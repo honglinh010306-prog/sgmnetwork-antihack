@@ -25,10 +25,10 @@ const announcementActive = document.querySelector('#announcement-active');
 const announcementMessage = document.querySelector('#announcement-message');
 const announcementStorageKey = 'ff_antihack_announcement';
 let activeReportId = '';
-// --- Admin password (change this to your own password) ---
-const ADMIN_PASSWORD = 'SGMAdmin@2026';
-// ----------------------------------------------------------
 const supabaseClient = window.ReportStore?.reportSupabase || null;
+// Admin credentials
+const ADMIN_EMAIL = 'honglinh010306@gmail.com';
+const ADMIN_PASSWORD = 'SGMAdmin@2026';
 
 let reportCache = window.ReportStore ? window.ReportStore.localReports() : [];
 let _unsubscribeRealtime = null;
@@ -98,13 +98,14 @@ function setAuthenticated(isAuthenticated) {
 
 async function handleAuth(event) {
   event.preventDefault();
+  const email = document.querySelector('#admin-username').value.trim().toLowerCase();
   const password = document.querySelector('#admin-password').value;
   authError.textContent = '';
   authSubmit.disabled = true;
   authSubmit.textContent = 'Đang đăng nhập...';
-  await new Promise((r) => setTimeout(r, 300)); // small delay to prevent brute force
-  if (password !== ADMIN_PASSWORD) {
-    authError.textContent = 'Mật khẩu không đúng. Vui lòng thử lại.';
+  await new Promise((r) => setTimeout(r, 300));
+  if (email !== ADMIN_EMAIL || password !== ADMIN_PASSWORD) {
+    authError.textContent = 'Email hoặc mật khẩu không đúng.';
     authSubmit.disabled = false;
     authSubmit.textContent = 'Đăng nhập';
     return;
@@ -274,10 +275,10 @@ modal.addEventListener('click', (event) => { if (event.target === modal) closeDe
 document.addEventListener('keydown', (event) => { if (event.key === 'Escape') closeDetails(); });
 
 lucide.createIcons();
-// Auto-restore session on reload
 setAuthenticated(sessionStorage.getItem('ff_antihack_admin_auth') === '1');
 loadAnnouncement();
-// Polling fallback — only runs if Realtime is unavailable
-window.setInterval(() => {
-  if (sessionStorage.getItem('ff_antihack_admin_auth') === '1' && !_unsubscribeRealtime) refreshReports();
+window.setInterval(async () => {
+  if (!supabaseClient) return;
+  const { data } = await supabaseClient.auth.getSession();
+  if (data.session && !_unsubscribeRealtime) refreshReports();
 }, 5000);
